@@ -1,0 +1,12 @@
+bin/
+obj/
+.vs/
+secrets/
+.env
+.env.*
+!.env.example
+credentials.json
+**/credentials.json
+fly-stock-oauth-secret.json
+**/*-oauth-secret.json
+appsettings.Production.json
