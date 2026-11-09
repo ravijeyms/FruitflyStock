@@ -1,0 +1,12 @@
+.git
+.vs
+bin
+obj
+secrets
+.env
+.env.*
+**/credentials.json
+**/*-oauth-secret.json
+appsettings.Production.json
+*.user
+*.suo

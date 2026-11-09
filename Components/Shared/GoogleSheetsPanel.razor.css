@@ -1,0 +1,60 @@
+.google-panel
+{
+	margin: 0;
+	padding: 16px;
+	border: 1px solid #e2e2e2;
+	border-radius: 10px;
+	background: #fff;
+}
+
+.google-panel h2
+{
+	margin: 0;
+	font-size: 17px;
+	font-weight: 600;
+}
+
+.google-actions
+{
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 12px 0;
+}
+
+.linked-sheets-label
+{
+	display: block;
+	margin: 12px 0 6px;
+	color: #555;
+	font-size: 12px;
+}
+
+.google-help
+{
+	margin: 0 0 6px;
+	color: #777;
+	font-size: 12px;
+}
+
+.linked-sheets
+{
+	display: block;
+	width: 100%;
+	min-height: 58px;
+	margin-bottom: 8px;
+	padding: 6px;
+	border: 1px solid #d5d5d5;
+	border-radius: 6px;
+	background: #fff;
+	color: #222;
+	font: inherit;
+	font-size: 13px;
+}
+
+.google-status
+{
+	margin: 10px 0 0;
+	color: #666;
+	font-size: 12px;
+}

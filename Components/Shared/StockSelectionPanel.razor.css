@@ -1,0 +1,99 @@
+.selection-panel
+{
+	display: flex;
+	min-height: 300px;
+	min-width: 0;
+	flex: 1;
+	flex-direction: column;
+	margin: 0;
+	padding: 16px;
+	border: 1px solid #e2e2e2;
+	border-radius: 10px;
+	background: #fff;
+}
+
+.selection-panel h2
+{
+	margin: 0;
+	font-size: 17px;
+	font-weight: 600;
+}
+
+.selection-heading
+{
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-bottom: 12px;
+}
+
+.selection-count
+{
+	color: #777;
+	font-size: 13px;
+}
+
+.selection-help
+{
+	margin: 8px 0;
+	color: #777;
+	font-size: 12px;
+}
+
+.selection-items
+{
+	flex: 1;
+	min-height: 120px;
+	overflow-y: auto;
+	display: grid;
+	align-content: start;
+	gap: 6px;
+	margin: 12px 0;
+	padding: 0;
+	list-style: none;
+}
+
+.selection-item
+{
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 8px 10px;
+	border: 1px solid #e5e5e5;
+	border-radius: 6px;
+	background: #fafafa;
+}
+
+.selection-label
+{
+	min-width: 0;
+	overflow-wrap: anywhere;
+	color: #222;
+	font-size: 13px;
+}
+
+.selection-empty
+{
+	color: #888;
+	font-size: 13px;
+}
+
+.selection-remove
+{
+	flex-shrink: 0;
+	padding: 4px 8px;
+	border: 1px solid #ccc;
+	border-radius: 5px;
+	background: #fff;
+	color: #555;
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+#printLabels
+{
+	margin-top: 8px;
+}

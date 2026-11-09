@@ -1,0 +1,64 @@
+/* ========================================
+   GLOBAL
+======================================== */
+
+*
+{
+	box-sizing: border-box;
+}
+
+html
+{
+	width: 100%;
+	max-width: 100%;
+}
+
+body
+{
+	margin: 0;
+	padding: 0;
+	width: 100%;
+	max-width: 100%;
+	overflow-x: hidden;
+	background: #f7f7f7;
+	color: #222;
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+		Roboto, Helvetica, Arial, sans-serif;
+}
+
+.action-button,
+.secondary-button
+{
+	padding: 8px 12px;
+	border: 1px solid #bbb;
+	border-radius: 6px;
+	background: #f4f4f4;
+	color: #222;
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.action-button
+{
+	border-color: #377c46;
+	background: #e5f4e8;
+	color: #26733a;
+}
+
+.action-button:hover:not(:disabled)
+{
+	background: #d9efdd;
+}
+
+.secondary-button:hover:not(:disabled)
+{
+	background: #e9e9e9;
+}
+
+.action-button:disabled,
+.secondary-button:disabled
+{
+	opacity: 0.55;
+	cursor: not-allowed;
+}

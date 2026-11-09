@@ -1,0 +1,144 @@
+@*
+    SEARCH INPUT AND COMMON TERMS
+    Pseudocode:
+    - Render common-term buttons and the editable search field.
+    - Display the typed text alongside removable token chips.
+    - When text or tokens change, combine them into one query and notify the parent.
+    Purpose: own search-input interaction while leaving stock searching to the page/service.
+*@
+<div class="search-area">
+    <div class="common-terms">
+        <div class="terms-title">
+            Common Terms
+        </div>
+
+        <div id="commonTerms">
+            @if (CommonTerms.Count == 0)
+            {
+                <div class="loading-terms">Connect a spreadsheet to see common terms.</div>
+            }
+            else
+            {
+                @foreach (var term in CommonTerms)
+                {
+                    <button class="common-term"
+                            type="button"
+                            @onclick="() => AddSearchToken(term)">
+                        @term
+                    </button>
+                }
+            }
+        </div>
+    </div>
+
+    <div class="search-wrapper">
+        <div id="searchBox" class="search-box">
+            <div id="searchTokens">
+                @for (var index = 0; index < SearchTokens.Count; index++)
+                {
+                    var tokenIndex = index;
+                    var token = SearchTokens[tokenIndex];
+                    <span class="search-token">
+                        <span>@token</span>
+                        <button class="search-token-remove"
+                                type="button"
+                                title="Remove @token"
+                                aria-label="Remove @token"
+                                @onclick="() => RemoveSearchToken(tokenIndex)">
+                            ×
+                        </button>
+                    </span>
+                }
+            </div>
+
+            <input id="searchInput"
+                   @ref="SearchInput"
+                   type="text"
+                   placeholder="Search stocks..."
+                   autocomplete="off"
+                   spellcheck="false"
+                   value="@SearchText"
+                   @oninput="OnSearchInput"
+                   @onkeydown="HandleSearchKeyDown" />
+        </div>
+    </div>
+</div>
+
+@code {
+    // ===== Component contract and input state =====
+    // Pseudocode:
+    // - Receive the current common terms from the parent.
+    // - Keep uncommitted text and committed token chips locally.
+    // - Send the combined query upward whenever either input changes.
+    [Parameter]
+    public IReadOnlyList<string> CommonTerms { get; set; } = [];
+
+    [Parameter]
+    public EventCallback<string> QueryChanged { get; set; }
+
+    private readonly List<string> SearchTokens = [];
+    private string SearchText = "";
+    private ElementReference SearchInput;
+
+    // ===== Search input and token interactions =====
+    // Pseudocode:
+    // - Store text changes and notify the parent.
+    // - If Backspace is pressed on an empty input, remove the last token.
+    // - Add only non-empty, non-duplicate tokens; remove only valid token indexes.
+    // - After token edits, restore focus to the input.
+    // These handlers are async because callbacks and browser focus operations can
+    // complete asynchronously.
+    private async Task OnSearchInput(ChangeEventArgs args)
+    {
+        SearchText = args.Value?.ToString() ?? "";
+        await NotifyQueryChanged();
+    }
+
+    private async Task HandleSearchKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Backspace" &&
+            string.IsNullOrEmpty(SearchText) &&
+            SearchTokens.Count > 0)
+        {
+            await RemoveSearchToken(SearchTokens.Count - 1);
+        }
+    }
+
+    private async Task AddSearchToken(string term)
+    {
+        var normalizedTerm = term.Trim();
+        if (normalizedTerm.Length == 0 ||
+            SearchTokens.Contains(normalizedTerm, StringComparer.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        SearchTokens.Add(normalizedTerm);
+        await NotifyQueryChanged();
+        await SearchInput.FocusAsync();
+    }
+
+    private async Task RemoveSearchToken(int index)
+    {
+        if (index >= 0 && index < SearchTokens.Count)
+        {
+            SearchTokens.RemoveAt(index);
+            await NotifyQueryChanged();
+            await SearchInput.FocusAsync();
+        }
+    }
+
+    // ===== Query composition =====
+    // Pseudocode:
+    // - Split typed text on whitespace and commas.
+    // - Append those terms after the explicit token chips.
+    // - Notify the parent with one space-separated query.
+    private Task NotifyQueryChanged()
+    {
+        var typedTerms = SearchText.Split(
+            new[] { ' ', '\t', '\n', ',' },
+            StringSplitOptions.RemoveEmptyEntries);
+        var query = string.Join(' ', SearchTokens.Concat(typedTerms));
+        return QueryChanged.InvokeAsync(query);
+    }
+}

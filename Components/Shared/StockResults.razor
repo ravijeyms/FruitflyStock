@@ -1,0 +1,137 @@
+@using System.Text.RegularExpressions
+@using System.Text.Json
+
+@*
+    ===== Results rendering =====
+    Pseudocode:
+    - If a query exists and there are no matching stocks, show the empty state.
+    - Otherwise, if stocks exist, render one shared column header and one row per stock.
+    - For each row, derive a stable key, reflect pending-selection state in its checkbox,
+      report checkbox changes to the parent, and highlight query terms in every cell.
+    Purpose: keep result presentation in this component while leaving search and
+    selection state ownership in the parent component.
+*@
+<div id="results">
+    @if (HasSearchQuery && Stocks.Count == 0)
+    {
+        <div class="no-results">No stocks found.</div>
+    }
+    else if (Stocks.Count > 0)
+    {
+        <div class="stock stock-header">
+            <div class="stock-cell stock-select-cell" title="Select stocks"></div>
+            @foreach (var column in StockColumns.All)
+            {
+                <div class="stock-cell">@column.Label</div>
+            }
+        </div>
+
+        @foreach (var stock in Stocks)
+        {
+            var stockKey = GetStockKey(stock);
+            <div class="stock">
+                <div class="stock-cell stock-select-cell">
+                    <input type="checkbox"
+                           class="stock-select"
+                           checked="@PendingStockKeys.Contains(stockKey)"
+                           aria-label="Select @StockLabel(stock)"
+                           @onchange="args => StockSelectionChanged.InvokeAsync(
+                               new StockSelectionChange(stock, args.Value is true))" />
+                </div>
+                @foreach (var column in StockColumns.All)
+                {
+                    var value = column.GetValue(stock);
+                    <div class="stock-cell" title="@value">@Highlight(value)</div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    // ===== Component contract and rendering state =====
+    // Pseudocode:
+    // - Receive results, the query, and the set of checked stock keys from the parent.
+    // - Notify the parent when a checkbox changes; do not keep a second copy of its state.
+    // These are parameters so this component stays reusable and the parent remains the
+    // source of truth for search and selection.
+    [Parameter]
+    public IReadOnlyList<FlyStock> Stocks { get; set; } = [];
+
+    [Parameter]
+    public IReadOnlySet<string> PendingStockKeys { get; set; } =
+        new HashSet<string>(StringComparer.Ordinal);
+
+    [Parameter]
+    public string Query { get; set; } = "";
+
+    [Parameter]
+    public EventCallback<StockSelectionChange> StockSelectionChanged { get; set; }
+
+    // ===== Row identity and accessible labels =====
+    // Pseudocode:
+    // - Treat a non-whitespace query as an active search.
+    // - Build a key from the ordered stock-column values so equal stock rows share identity.
+    // - Prefer the stock label for assistive text, then its identifier, then a fallback.
+    private bool HasSearchQuery => !string.IsNullOrWhiteSpace(Query);
+
+    private static string GetStockKey(FlyStock stock) =>
+        JsonSerializer.Serialize(StockColumns.All.Select(column => column.GetValue(stock)));
+
+    private static string StockLabel(FlyStock stock) =>
+        !string.IsNullOrWhiteSpace(stock.Label)
+            ? stock.Label
+            : !string.IsNullOrWhiteSpace(stock.ShortIdentifier)
+                ? stock.ShortIdentifier
+                : "Unnamed stock";
+
+    // ===== Safe query highlighting =====
+    // Pseudocode:
+    // - Split the query into terms, remove duplicates, and check longer terms first.
+    // - If there are no terms, render the cell value as ordinary encoded text.
+    // - Find case-insensitive matches, emit the intervening text as text nodes, and wrap
+    //   matches in <mark>; finally emit any trailing text.
+    // RenderFragmentBuilder encodes AddContent as text, so stock values are not interpreted
+    // as HTML. This is a synchronous fragment factory: it does no I/O, so async is unnecessary.
+    private RenderFragment Highlight(string value) => builder =>
+    {
+        var terms = Query
+            .Split(
+                new[] { ' ', '\t', '\n', ',' },
+                StringSplitOptions.RemoveEmptyEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(term => term.Length)
+            .ToArray();
+
+        if (terms.Length == 0)
+        {
+            builder.AddContent(0, value);
+            return;
+        }
+
+        var matches = Regex.Matches(
+            value,
+            string.Join("|", terms.Select(Regex.Escape)),
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var sequence = 0;
+        var position = 0;
+
+        foreach (Match match in matches)
+        {
+            if (match.Index > position)
+            {
+                builder.AddContent(sequence++, value[position..match.Index]);
+            }
+
+            builder.OpenElement(sequence++, "mark");
+            builder.AddContent(sequence++, match.Value);
+            builder.CloseElement();
+            position = match.Index + match.Length;
+        }
+
+        if (position < value.Length)
+        {
+            builder.AddContent(sequence, value[position..]);
+        }
+    };
+}

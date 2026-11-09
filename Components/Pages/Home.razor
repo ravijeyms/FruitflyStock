@@ -1,0 +1,147 @@
+@page "/"
+@rendermode InteractiveServer
+@using System.Text.Json
+@inject IStockSearchService StockSearchService
+@inject ICommonTermsService CommonTermsService
+
+<PageTitle>Fly Stock Search</PageTitle>
+
+@*
+    PAGE COMPOSITION
+    Pseudocode:
+    - Render the app heading.
+    - Let the Google panel supply the current stock set.
+    - Pass common terms and query changes through the search component.
+    - Pass selection state/actions and result state/actions to their UI components.
+    Purpose: keep this page as the state coordinator while each child component handles
+    the markup and interaction for one feature.
+*@
+<div class="container">
+    <h1>Fly Stock Search</h1>
+    <p class="subtitle">Search the available Drosophila stocks.</p>
+
+    <div class="page-columns">
+        <div class="left-column">
+            <GoogleSheetsPanel StocksChanged="OnStocksChanged" />
+
+            <StockSelectionPanel SelectedStocks="SelectedStocks"
+                                 PendingStocks="PendingStocks"
+                                 AddToSelection="AddPendingStocks"
+                                 ClearSelectedStocks="ClearSelection"
+                                 RemoveStock="RemoveFromSelection" />
+        </div>
+
+        <div class="right-column">
+            <StockSearchBox CommonTerms="CommonTerms"
+                            QueryChanged="OnQueryChanged" />
+
+            <StockResults Stocks="SearchResults"
+                          PendingStockKeys="PendingStockKeys"
+                          Query="SearchQuery"
+                          StockSelectionChanged="OnStockSelectionChanged" />
+        </div>
+    </div>
+</div>
+
+
+
+
+
+
+
+@code {
+    // ===== Page state =====
+    // Pseudocode:
+    // - Keep the imported stock set and derived search/common-term results here.
+    // - Keep pending selections separate from confirmed selections.
+    // - Provide keys for checkbox rendering without exposing mutable dictionaries.
+    private readonly Dictionary<string, FlyStock> PendingStocks = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FlyStock> SelectedStocks = new(StringComparer.Ordinal);
+
+    private List<FlyStock> Stocks = [];
+    private List<FlyStock> SearchResults = [];
+    private List<string> CommonTerms = [];
+    private IReadOnlySet<string> PendingStockKeys => PendingStocks.Keys.ToHashSet(StringComparer.Ordinal);
+    private string SearchQuery = "";
+
+    // ===== Child-component event handlers =====
+    // Pseudocode:
+    // - When stocks change, recalculate common terms and current results.
+    // - When the query changes, retain it and recalculate results.
+    // - When a result checkbox changes, add or remove that stock from pending selection.
+    // - On add, copy pending stocks to confirmed selection and clear pending state;
+    //   on remove/clear, update only confirmed selection.
+    // Task-returning handlers match EventCallback's async contract; these operations are
+    // in-memory and complete synchronously, so they return a completed Task without async.
+    private Task OnStocksChanged(List<FlyStock> stocks)
+    {
+        Stocks = stocks;
+        CommonTerms = CommonTermsService.GetCommonTerms(Stocks, 50);
+        UpdateSearchResults();
+        return Task.CompletedTask;
+    }
+
+    private Task OnQueryChanged(string query)
+    {
+        SearchQuery = query;
+        UpdateSearchResults();
+        return Task.CompletedTask;
+    }
+
+    private Task OnStockSelectionChanged(StockSelectionChange change)
+    {
+        var key = GetStockKey(change.Stock);
+        if (change.IsSelected)
+        {
+            PendingStocks[key] = change.Stock;
+        }
+        else
+        {
+            PendingStocks.Remove(key);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private Task AddPendingStocks(
+        IReadOnlyDictionary<string, FlyStock> stocksToAdd)
+    {
+        foreach (var (key, stock) in stocksToAdd)
+        {
+            SelectedStocks[key] = stock;
+        }
+
+        PendingStocks.Clear();
+        return Task.CompletedTask;
+    }
+
+    private Task RemoveFromSelection(string key)
+    {
+        SelectedStocks.Remove(key);
+        return Task.CompletedTask;
+    }
+
+    private Task ClearSelection()
+    {
+        SelectedStocks.Clear();
+        return Task.CompletedTask;
+    }
+
+    // ===== Derived search results and stock identity =====
+    // Pseudocode:
+    // - If the query is blank, show no result rows.
+    // - Otherwise search the current stocks, deduplicate equivalent column values, and
+    //   materialize the result list for rendering.
+    // - Serialize the ordered column values to get a consistent identity across components.
+    private void UpdateSearchResults()
+    {
+        SearchResults = string.IsNullOrWhiteSpace(SearchQuery)
+            ? []
+            : StockSearchService.Search(Stocks, SearchQuery)
+                .DistinctBy(GetStockKey, StringComparer.Ordinal)
+                .ToList();
+    }
+
+    private static string GetStockKey(FlyStock stock) =>
+        JsonSerializer.Serialize(StockColumns.All.Select(column => column.GetValue(stock)));
+}

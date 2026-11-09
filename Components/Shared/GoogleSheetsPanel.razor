@@ -1,0 +1,297 @@
+@implements IAsyncDisposable
+@using Microsoft.JSInterop
+@using System.Text.Json
+@using System.Security.Cryptography
+@using System.Text
+@using Microsoft.Extensions.Options
+@inject IGoogleSheetsService SheetsService
+@inject IGoogleOAuthService OAuthService
+@inject IOptions<GoogleOptions> GoogleOptions
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+@*
+    GOOGLE SHEETS PANEL
+    Pseudocode:
+    - Render sign-in, picker, connected-sheet list, removal controls, and status.
+    - Load the small JS module that must call Google's browser SDK.
+    - Receive picked spreadsheet IDs from JS, read their data through the C# service,
+      then publish the combined stocks to the parent.
+    Purpose: isolate external Google workflows from app search and selection behavior.
+*@
+<section class="google-panel" aria-labelledby="googlePanelTitle">
+    <h2 id="googlePanelTitle">Google Sheets</h2>
+
+    <div class="google-actions">
+        <button id="googleSignIn" class="action-button" type="button">
+            @(IsSignedIn ? "Sign out of Google" : "Sign in with Google")
+        </button>
+
+        <button id="chooseSheets"
+                class="action-button"
+                type="button"
+                disabled="@(!IsSignedIn)">
+            Choose spreadsheets
+        </button>
+    </div>
+
+    <label class="linked-sheets-label" for="linkedSheets">
+        Connected spreadsheets (all are included in search)
+    </label>
+
+    <p class="google-help">
+        Each spreadsheet's first tab should use the same stock columns in A:K order.
+    </p>
+
+    <select id="linkedSheets"
+            class="linked-sheets"
+            multiple
+            size="3"
+            aria-label="Connected spreadsheets"
+            @onchange="OnLinkedSheetsChanged">
+        @if (ConnectedSheets.Count == 0)
+        {
+            <option disabled>No spreadsheets linked</option>
+        }
+        else
+        {
+            @foreach (var sheet in ConnectedSheets)
+            {
+                <option value="@sheet.Id">@sheet.Name (@sheet.StockCount stocks)</option>
+            }
+        }
+    </select>
+
+    <button id="removeSheets"
+            class="secondary-button"
+            type="button"
+            disabled="@(SelectedSheets.Count == 0)"
+            @onclick="RemoveSelectedSheets">
+        Remove selected spreadsheets
+    </button>
+
+    <p id="googleStatus" class="google-status" role="status" aria-live="polite">
+        @Status
+    </p>
+</section>
+
+@code {
+    // ===== Parent contract and component state =====
+    // Pseudocode:
+    // - Publish the combined stock data whenever linked spreadsheets change.
+    // - Track link/sign-in/status locally because this panel owns the Google workflow.
+    // - Retain JS references so callbacks can be unregistered and disposed with the panel.
+    [Parameter]
+    public EventCallback<List<FlyStock>> StocksChanged { get; set; }
+
+    private readonly List<ConnectedSpreadsheet> ConnectedSheets = [];
+    private readonly List<string> SelectedSheets = [];
+    private string Status = "";
+    private bool IsSignedIn;
+    private string _oauthState = CreateOAuthState();
+    private IJSObjectReference? _googleModule;
+    private DotNetObjectReference<GoogleSheetsPanel>? _dotNetReference;
+
+    // ===== Browser interop lifecycle =====
+    // Pseudocode:
+    // - Do nothing on later renders.
+    // - After the first interactive render, import the module and register this component
+    //   as the .NET callback target.
+    // Async is required because module import and JS invocation cross the browser/server
+    // boundary and complete asynchronously.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        _googleModule = await JS.InvokeAsync<IJSObjectReference>(
+            "import",
+            "/JS/google-picker.js");
+        _dotNetReference = DotNetObjectReference.Create(this);
+        await _googleModule.InvokeVoidAsync(
+            "initialize",
+            _dotNetReference,
+            GoogleOptions.Value.ClientId,
+            GoogleOptions.Value.ApiKey,
+            GoogleOptions.Value.AppId,
+            _oauthState);
+    }
+
+    // ===== JavaScript-to-.NET callbacks =====
+    // Pseudocode:
+    // - Validate the per-circuit OAuth state before exchanging a code; rotate that state
+    //   after successful authorization.
+    // - Record sign-in/sign-out/status changes and ask Blazor to rerender.
+    // - On sign-out, clear linked sheets and publish an empty stock collection.
+    // - On picker response, validate signed-in state, skip already-linked sheets, fetch
+    //   each new sheet, collect expected per-sheet failures, then publish combined stocks.
+    // These callbacks are Task-based because token exchange, JS interop, and parent
+    // EventCallbacks are asynchronous.
+    [JSInvokable]
+    public async Task<GoogleOAuthSession> OnGoogleAuthorizationCode(
+        string authorizationCode,
+        string state)
+    {
+        if (!IsValidOAuthState(state))
+        {
+            throw new UnauthorizedAccessException("Google authorization state validation failed.");
+        }
+
+        var redirectUri = new Uri(Navigation.BaseUri)
+            .GetLeftPart(UriPartial.Authority);
+        var accessToken = await OAuthService.ExchangeAuthorizationCodeAsync(
+            authorizationCode,
+            redirectUri);
+        _oauthState = CreateOAuthState();
+        IsSignedIn = true;
+        Status = "Signed in to Google. Choose spreadsheets to connect.";
+        await InvokeAsync(StateHasChanged);
+        return new GoogleOAuthSession(accessToken, _oauthState);
+    }
+
+    [JSInvokable]
+    public async Task OnGoogleSignedOut()
+    {
+        await OAuthService.ClearSessionAsync();
+        IsSignedIn = false;
+        ConnectedSheets.Clear();
+        SelectedSheets.Clear();
+        Status = "Signed out of Google.";
+        await StocksChanged.InvokeAsync([]);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task<string> GetPickerAccessToken() =>
+        OAuthService.GetAccessTokenAsync();
+
+    [JSInvokable]
+    public Task OnGoogleStatusChanged(string message)
+    {
+        Status = message;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task OnSpreadsheetsPicked(List<GoogleSpreadsheetSelection> spreadsheets)
+    {
+        if (!IsSignedIn)
+        {
+            Status = "Sign in to Google before choosing spreadsheets.";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        var failures = new List<string>();
+        var addedCount = 0;
+
+        foreach (var spreadsheet in spreadsheets)
+        {
+            if (ConnectedSheets.Any(sheet => sheet.Id == spreadsheet.Id))
+            {
+                continue;
+            }
+
+            try
+            {
+                var stocks = await SheetsService.GetStocksAsync(
+                    spreadsheet.Id,
+                    spreadsheet.Name);
+                ConnectedSheets.Add(new ConnectedSpreadsheet(
+                    spreadsheet.Id,
+                    spreadsheet.Name,
+                    stocks));
+                addedCount++;
+            }
+            catch (Exception exception) when (
+                exception is HttpRequestException or
+                InvalidOperationException or
+                JsonException or
+                IOException or
+                OperationCanceledException)
+            {
+                failures.Add($"{spreadsheet.Name}: {exception.Message}");
+            }
+        }
+
+        await NotifyStocksChanged();
+        Status = failures.Count > 0
+            ? $"Some spreadsheets could not be linked: {string.Join(" ", failures)}"
+            : $"{addedCount} spreadsheet{(addedCount == 1 ? "" : "s")} linked.";
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // ===== Connected spreadsheet updates =====
+    // Pseudocode:
+    // - Capture selected IDs from the multi-select.
+    // - Remove selected sheets when requested and publish all remaining stock rows.
+    // The notify helper keeps the same flattened-stock contract for linking/removal/sign-out.
+    private void OnLinkedSheetsChanged(ChangeEventArgs args)
+    {
+        SelectedSheets.Clear();
+        if (args.Value is string[] values)
+        {
+            SelectedSheets.AddRange(values);
+        }
+    }
+
+    private async Task RemoveSelectedSheets()
+    {
+        ConnectedSheets.RemoveAll(sheet => SelectedSheets.Contains(sheet.Id));
+        SelectedSheets.Clear();
+        await NotifyStocksChanged();
+    }
+
+    private Task NotifyStocksChanged() =>
+        StocksChanged.InvokeAsync(
+            ConnectedSheets.SelectMany(sheet => sheet.Stocks).ToList());
+
+    private bool IsValidOAuthState(string state)
+    {
+        var expected = Encoding.UTF8.GetBytes(_oauthState);
+        var actual = Encoding.UTF8.GetBytes(state ?? "");
+        return expected.Length == actual.Length &&
+            CryptographicOperations.FixedTimeEquals(expected, actual);
+    }
+
+    private static string CreateOAuthState() =>
+        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+
+    // ===== Interop cleanup and local view model =====
+    // Pseudocode:
+    // - Ask the JS module to detach its click handlers, then dispose the module.
+    // - Ignore only a disconnected circuit, where browser cleanup cannot complete.
+    // - Always release the .NET callback reference.
+    // The nested spreadsheet record is private and sealed because it is a data-only
+    // implementation detail, not an extension point. The component remains inheritable.
+    public async ValueTask DisposeAsync()
+    {
+        if (_googleModule is not null)
+        {
+            try
+            {
+                await _googleModule.InvokeVoidAsync("dispose");
+                await _googleModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+
+        _dotNetReference?.Dispose();
+    }
+
+    private sealed record ConnectedSpreadsheet(
+        string Id,
+        string Name,
+        List<FlyStock> Stocks)
+    {
+        public int StockCount => Stocks.Count;
+    }
+}

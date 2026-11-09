@@ -1,0 +1,126 @@
+@*
+    STOCK SELECTION VIEW
+    Pseudocode:
+    - Show the number and labels of confirmed stocks.
+    - Disable add/clear controls when their respective lists are empty.
+    - Forward add, clear, and remove requests to the parent without mutating its state.
+    Purpose: keep selection presentation separate from selection ownership.
+*@
+@using System.Text.Json
+
+<section class="selection-panel" aria-labelledby="selectionTitle">
+    <div class="selection-heading">
+        <h2 id="selectionTitle">Stock selection</h2>
+
+        <span id="selectionCount" class="selection-count">
+            @SelectedStocks.Count stock@(SelectedStocks.Count == 1 ? "" : "s")
+        </span>
+    </div>
+
+    <button id="addToSelection"
+            class="action-button"
+            type="button"
+            disabled="@(PendingStocks.Count == 0)"
+            @onclick="AddPendingStocks">
+        Add to selection
+    </button>
+
+    <ul id="selectionItems" class="selection-items">
+        @if (SelectedStocks.Count == 0)
+        {
+            <li class="selection-empty">No stocks added to your selection yet.</li>
+        }
+        else
+        {
+            @foreach (var (key, stock) in SelectedStocks)
+            {
+                <li class="selection-item">
+                    <span class="selection-label">@StockLabel(stock)</span>
+                    <button class="selection-remove"
+                            type="button"
+                            aria-label="Remove @StockLabel(stock)"
+                            @onclick="() => RemoveStock.InvokeAsync(key)">
+                        Remove
+                    </button>
+                </li>
+            }
+        }
+    </ul>
+
+    <button id="clearSelection"
+            class="secondary-button"
+            type="button"
+            disabled="@(SelectedStocks.Count == 0)"
+            @onclick="ClearSelection">
+        Clear selection
+    </button>
+
+    <p class="selection-help">
+        The PDF includes stocks in this list and currently checked search results.
+    </p>
+
+    <button id="printLabels"
+            class="action-button"
+            type="button"
+            disabled="@(LabelStocks.Count == 0)"
+            data-stocks="@LabelStocksJson">
+        Print PDF
+    </button>
+</section>
+
+@code {
+    // ===== Parent-owned selection state and actions =====
+    // Pseudocode:
+    // - Receive confirmed and pending stock collections.
+    // - Send add/clear/remove requests through callbacks.
+    // - Use the same label fallback for visible text and accessible names.
+    // The component does not copy these collections, so the parent remains the single
+    // source of truth.
+    [Parameter]
+    public IReadOnlyDictionary<string, FlyStock> SelectedStocks { get; set; } =
+        new Dictionary<string, FlyStock>();
+
+    [Parameter]
+    public IReadOnlyDictionary<string, FlyStock> PendingStocks { get; set; } =
+        new Dictionary<string, FlyStock>();
+
+    [Parameter]
+    public EventCallback<IReadOnlyDictionary<string, FlyStock>> AddToSelection { get; set; }
+
+    [Parameter]
+    public EventCallback ClearSelectedStocks { get; set; }
+
+    [Parameter]
+    public EventCallback<string> RemoveStock { get; set; }
+
+    private Task AddPendingStocks() => AddToSelection.InvokeAsync(PendingStocks);
+
+    private Task ClearSelection() => ClearSelectedStocks.InvokeAsync();
+
+    private IReadOnlyList<FlyStock> LabelStocks
+    {
+        get
+        {
+            var stocks = SelectedStocks.ToDictionary(
+                entry => entry.Key,
+                entry => entry.Value,
+                StringComparer.Ordinal);
+            foreach (var (key, stock) in PendingStocks)
+            {
+                stocks.TryAdd(key, stock);
+            }
+
+            return stocks.Values.ToArray();
+        }
+    }
+
+    private string LabelStocksJson => JsonSerializer.Serialize(
+        LabelStocks.Select(stock => new { label = stock.Label, genotype = stock.Genotype }));
+
+    private static string StockLabel(FlyStock stock) =>
+        !string.IsNullOrWhiteSpace(stock.Label)
+            ? stock.Label
+            : !string.IsNullOrWhiteSpace(stock.ShortIdentifier)
+                ? stock.ShortIdentifier
+                : "Unnamed stock";
+}
