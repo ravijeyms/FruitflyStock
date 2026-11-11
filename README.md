@@ -28,7 +28,8 @@ and set up Google Picker credentials.
 
    Use the origin only: no path or trailing slash. This app uses Google's
    popup-based OAuth flow, so configure JavaScript origins rather than adding a
-   redirect URI. Save the client ID and client secret for the environment setup
+   redirect URI. If you change the local `HOST_PORT` below, use that port here
+   instead. Save the client ID and client secret for the environment setup
    below. Keep the client secret private.
 
    Testing mode only allows listed test users. Before opening an external app
@@ -69,37 +70,91 @@ From the repository root, copy the example environment file:
 cp .env.example .env
 ```
 
-Fill in the four values in `.env`:
+Fill in the four Google values in `.env`. `HOST_PORT` is optional and defaults
+to `8080`:
 
 ```dotenv
 GOOGLE_CLIENT_ID=your-web-oauth-client-id
 GOOGLE_CLIENT_SECRET=your-web-oauth-client-secret
 GOOGLE_API_KEY=your-restricted-picker-api-key
 GOOGLE_APP_ID=your-numeric-google-cloud-project-number
+HOST_PORT=8080
 ```
 
 Use the OAuth client ID and secret from step 1, the restricted API key from
 step 3, and the numeric project number from the same Cloud project. Do not add
 quotes around the values. The root `.env` file is ignored by Git; do not commit
 it or share its client secret. It is also excluded from the Docker build
-context.
+context. To use a different local port, change `HOST_PORT` (for example,
+`HOST_PORT=8090`) and allow that port in the API-key website restriction
+(`http://localhost:8090/*`).
 
 ## 5. Start the app
 
-Install and start Docker Desktop, then run from the repository root:
+Install and start Docker Desktop. From the repository root, build the image
+first:
 
 ```sh
-docker compose up --build
+docker compose build
 ```
 
-Open [http://localhost:8080](http://localhost:8080). Docker Compose reads the
-four `.env` values and provides them to the server as .NET configuration. All
-four values are required.
+This creates the local image `fruitflystock:local` without starting a
+container. Confirm it is present with `docker image ls fruitflystock`.
+When you're ready to run it, use:
 
-For a deployed app, serve it over HTTPS and update both the OAuth
-**Authorized JavaScript origins** and API-key website restrictions to match
-the deployed domain. Keep the OAuth client secret in the server's environment,
-not in browser code.
+```sh
+docker compose up
+```
+
+Open [http://localhost:8080](http://localhost:8080), or use the port set by
+`HOST_PORT`. Docker Compose maps that host port to port `8080` inside the
+container and provides the four Google values to the server as .NET
+configuration. The Google values are required; `HOST_PORT` is optional.
+
+`HOST_PORT` only changes the host-side port mapping; the app continues to
+listen on port `8080` inside the container. A domain is not needed to boot the
+app. For deployment, use a Kubernetes Service and Ingress (or another reverse
+proxy) to expose the container, terminate HTTPS, and route your domain to it.
+Update both the OAuth **Authorized JavaScript origins** and API-key website
+restrictions to match the public HTTPS URL. Keep the OAuth client secret in
+the server's environment, not in browser code.
+
+## Publish and run the image from GitHub Container Registry
+
+The GitHub Actions workflow at `.github/workflows/publish-container.yml`
+builds and publishes `ghcr.io/ravijeyms/fruitflystockapp:latest` whenever code
+is pushed to `main`. Pushing a version tag such as `v1.2.0` also publishes
+versioned tags. The Docker build context excludes `.env`, and the workflow
+does not pass Google credentials to the build.
+
+After the first successful workflow run, find the package under the
+repository's **Packages** page. GitHub Container Registry packages are private
+by default unless their visibility is changed. To let a friend pull without
+logging in, change the package visibility to public; otherwise, they need to
+authenticate to `ghcr.io` with permission to read the package.
+
+Your friend can create their own Compose file in any folder and run the
+published image without this repository or its `.env` file:
+
+```yaml
+services:
+  fruitflystock:
+    image: ghcr.io/ravijeyms/fruitflystockapp:latest
+    ports:
+      - "8090:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Google__ClientId: "their-client-id"
+      Google__ClientSecret: "their-client-secret"
+      Google__ApiKey: "their-picker-api-key"
+      Google__AppId: "their-google-project-number"
+```
+
+They can start it with `docker compose up -d` from that folder and visit
+`http://localhost:8090`. The left port can be changed; the right side must
+remain `8080`. These settings are supplied when the container starts and are
+not stored in the image. Keep the Compose file private because it contains the
+OAuth client secret.
 
 ## 6. Use the app
 
@@ -115,7 +170,7 @@ not in browser code.
 
 - **OAuth origin error:** Make sure the exact app origin is listed under the
   OAuth client's **Authorized JavaScript origins**. The local origin includes
-  port `8080`.
+  the value of `HOST_PORT` (default `8080`).
 - **Google sign-in unavailable:** Confirm the client ID is set in `.env` and
   the signed-in Google account is listed as a test user if the consent screen
   is in Testing.
